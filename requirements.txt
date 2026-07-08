@@ -1,0 +1,12 @@
+langchain
+langchain_community
+langchain-openai
+langchain-groq
+groq
+python-dotenv
+langchain-google-genai
+psycopg2-binary
+faiss-cpu
+sentence-transformers
+langchain-huggingface
+scikit-learn<1.9
