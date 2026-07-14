@@ -8,11 +8,13 @@ from typing import Optional
 from app.api.deps import get_db
 from app.services import chat_service
 from app.api.conversations import router as conversations_router
+from app.api.auth import router as auth_router
 
 app = FastAPI(title="HimalayaData AI Customer Service")
 
 # Include the inbox router
-app.include_router(conversations_router) # <-- ADD THIS
+app.include_router(conversations_router) 
+app.include_router(auth_router) 
 
 class ChatRequest(BaseModel):
     message: str

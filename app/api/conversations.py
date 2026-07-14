@@ -2,8 +2,8 @@ from fastapi import APIRouter, Depends, Query
 from pydantic import BaseModel
 from sqlalchemy.orm import Session
 from sqlalchemy import or_
-
-from app.api.deps import get_db
+from app.api.deps import get_db, get_current_agent
+from app.models.user import User
 from app.models.conversation import Conversation, Message
 from app.models.escalation import Escalation
 
@@ -16,13 +16,14 @@ router = APIRouter(prefix="/conversations", tags=["Conversations"])
 @router.get("/escalations/assigned")
 def get_assigned_escalations(
     status: str = Query(None, description="Filter by: pending, assigned, in_progress, resolved"),
-    db: Session = Depends(get_db)
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_agent)
 ):
     """
     Returns all tickets assigned to the logged-in human agent.
     (For now, hardcoded to agent_id=2).
     """
-    ASSIGNED_AGENT_ID = 2 
+    ASSIGNED_AGENT_ID = current_user.id
 
     query = db.query(Escalation).filter(Escalation.assigned_agent_id == ASSIGNED_AGENT_ID)
     
@@ -167,7 +168,8 @@ class AgentReplyRequest(BaseModel):
 def agent_reply(
     conversation_id: int, 
     request: AgentReplyRequest, 
-    db: Session = Depends(get_db)
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_agent)
 ):
     """
     Allows a human agent to send a message in an existing conversation.
@@ -176,11 +178,14 @@ def agent_reply(
     if not conversation:
         return {"error": "Conversation not found"}
 
-    AGENT_ID = 2 # Later, this will come from the logged-in user's token
+    query = db.query(Escalation).filter(Escalation.assigned_agent_id == current_user.id)
+    escalation = query.filter(Escalation.conversation_id == conversation_id).first()
+    if not escalation:
+        return {"error": "Escalation not found"}
     
     agent_msg = Message(
         conversation_id=conversation_id,
-        sender_id=AGENT_ID,
+        sender_id=current_user.id,
         sender_type="agent",
         content=request.message
     )

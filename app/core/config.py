@@ -1,14 +1,12 @@
-from pydantic_settings import BaseSettings, SettingsConfigDict
+from pydantic_settings import BaseSettings
 
 class Settings(BaseSettings):
-    # Define the variables you want to use in your app
     DATABASE_URL: str
-    GROQ_API_KEY: str = None  
+    GROQ_API_KEY: str
+    JWT_SECRET: str  
+    JWT_ALGORITHM: str = "HS256" # Standard JWT algorithm
 
-    model_config = SettingsConfigDict(
-        env_file=".env",
-        extra="ignore" 
-    )
+    class Config:
+        env_file = ".env"
 
-# Create a single instance of the settings
 settings = Settings()
