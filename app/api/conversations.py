@@ -1,3 +1,4 @@
+from fastapi import HTTPException
 from fastapi import APIRouter, Depends, Query
 from pydantic import BaseModel
 from sqlalchemy.orm import Session
@@ -80,15 +81,29 @@ def get_conversations(
     
     inbox_list = []
     for conv in conversations:
+        # Get the first message from the customer to use as a fallback title
+        first_user_msg = db.query(Message).filter(
+            Message.conversation_id == conv.id,
+            Message.sender_type == "customer"
+        ).order_by(Message.created_at.asc()).first()
+
         last_message = db.query(Message).filter(
             Message.conversation_id == conv.id
         ).order_by(Message.created_at.desc()).first()
+
+        # Determine the best summary for the UI
+        final_summary = conv.summary
+        if not final_summary or final_summary.strip() == "" or "no content" in final_summary.strip().lower():
+            if first_user_msg:
+                final_summary = first_user_msg.content[:35] + "..."
+            else:
+                final_summary = f"Conversation {conv.id}"
 
         inbox_list.append({
             "id": conv.id,
             "status": conv.status,
             "priority": conv.priority,
-            "summary": conv.summary,
+            "summary": final_summary,
             "last_message_preview": last_message.content[:100] if last_message else None,
             "last_message_at": last_message.created_at if last_message else conv.updated_at,
             "created_at": conv.created_at
@@ -206,3 +221,32 @@ def agent_reply(
         "message": "Agent reply sent successfully.",
         "sender_type": "agent"
     }
+
+# -------------------------------------------------------------------------------
+# DELETE All Conversations
+# -------------------------------------------------------------------------------
+@router.delete("/all")
+def delete_all_conversations(db: Session = Depends(get_db)):
+    """
+    Deletes ALL conversations and their messages from the database.
+    """
+    db.query(Message).delete()
+    db.query(Conversation).delete()
+    db.commit()
+    return {"status": "success", "message": "All conversations deleted."}
+
+# -------------------------------------------------------------------------------
+# DELETE Conversation
+# -------------------------------------------------------------------------------
+@router.delete("/{conversation_id}")
+def delete_conversation(conversation_id: int, db: Session = Depends(get_db)):
+    """
+    Deletes a conversation and all of its messages from the database.
+    """
+    conversation = db.query(Conversation).filter(Conversation.id == conversation_id).first()
+    if not conversation:
+        raise HTTPException(status_code=404, detail="Conversation not found")
+    
+    db.delete(conversation)
+    db.commit()
+    return {"status": "success", "message": f"Conversation {conversation_id} deleted."}

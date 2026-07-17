@@ -6,7 +6,8 @@ from langchain_groq import ChatGroq
 from app.models.conversation import Conversation, Message
 from app.models.escalation import Escalation
 from app.models.prompt import PromptTemplate
-from app.api.rag import retrieve_context
+from app.models.user import User
+from app.api.rag import retrieve_context  # <-- FIXED PATH
 from app.core.config import settings
 
 llm = ChatGroq(model="llama-3.1-8b-instant", api_key=settings.GROQ_API_KEY)
@@ -28,7 +29,7 @@ class MessageIntent(BaseModel):
     is_general_greeting: bool = Field(
         description=(
             "True for greetings or small talk only (hi, hello, thanks, bye, good morning) "
-            "with no real support question. False when they ask something substantive."
+            "with no real question. False when they ask something substantive."
         )
     )
 
@@ -56,10 +57,26 @@ def classify_message_intent(message_text: str) -> MessageIntent:
     )
 
 def process_chat_message(message_text: str, conversation_id: int = None, db: Session = None):
-    DUMMY_USER_ID = 1
+    # ====================================================================
+    # DYNAMIC CUSTOMER LOOKUP (Fixes the user_id=1 crash)
+    # ====================================================================
+    customer_user = db.query(User).filter(User.role == "customer").first()
+    if not customer_user:
+        customer_user = User(
+            name="Walk-in Customer", 
+            email="walkin@system.com", 
+            password="none", 
+            role="customer"
+        )
+        db.add(customer_user)
+        db.commit()
+        db.refresh(customer_user)
+    
+    DUMMY_USER_ID = customer_user.id
     DUMMY_AGENT_ID = 2 
 
     # 1. Get or Create Conversation
+    is_new = False
     if conversation_id:
         conversation = db.query(Conversation).filter(Conversation.id == conversation_id).first()
         if not conversation:
@@ -69,6 +86,7 @@ def process_chat_message(message_text: str, conversation_id: int = None, db: Ses
         db.add(conversation)
         db.commit()
         db.refresh(conversation)
+        is_new = True
 
     # 2. Save Customer's new message
     user_msg = Message(
@@ -79,6 +97,18 @@ def process_chat_message(message_text: str, conversation_id: int = None, db: Ses
     )
     db.add(user_msg)
     db.commit()
+
+    if is_new:
+        try:
+            summary_res = llm.invoke([
+                {"role": "system", "content": "Summarize the user's message into a short title (2 to 4 words). Output ONLY the title, no quotes, no extra text."},
+                {"role": "user", "content": message_text[:500]}
+            ])
+            conversation.summary = summary_res.content.strip().replace('"', '')
+            db.commit()
+        except Exception:
+            conversation.summary = message_text[:25] + "..."
+            db.commit()
 
     # ====================================================================
     # FEATURE 1: AI-DRIVEN INTENT & SECURITY CLASSIFIER
@@ -105,7 +135,10 @@ def process_chat_message(message_text: str, conversation_id: int = None, db: Ses
     context, score = retrieve_context(message_text)
 
     # Escalate if it's a real question but NOT in the PDF
-    if not analysis.is_general_greeting and (not context or context.strip() == "" or score < 0.35):
+    # ====================================================================
+    # TYPO FORGIVENESS (Lowered threshold from 0.35 to 0.25)
+    # ====================================================================
+    if not analysis.is_general_greeting and (not context or context.strip() == "" or score < 0.25):
         return handle_escalation(conversation, DUMMY_AGENT_ID, db, f"Question not found in knowledge base: {message_text}")
 
     # 4. Get System Prompt
